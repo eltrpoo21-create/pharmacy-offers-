@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="form-card narrow centered">
+  <div class="success-mark">✓</div>
+  <h1>تم استلام طلبك</h1>
+  <p>رقم الطلب الخاص بك هو <strong>#{{ order_id }}</strong>.</p>
+  {% if email_sent %}
+    <p class="success-text">تم إرسال إشعار الطلب إلى إدارة الصيدلية.</p>
+  {% else %}
+    <p class="muted">تم حفظ طلبك، لكن تعذر إرسال الإيميل حالياً. ستظل تفاصيل الطلب محفوظة في لوحة الإدارة.</p>
+  {% endif %}
+  <p class="small-note">الطلب مبدئي، وسيتم التواصل معك لتأكيد التوفر والتفاصيل.</p>
+  <a class="btn" href="{{ url_for('home') }}">العودة للعروض</a>
+</section>
+{% endblock %}

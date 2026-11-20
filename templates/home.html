@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <div>
+    <span class="eyebrow">عروض مختارة بعناية</span>
+    <h1>اكتشف أحدث عروض الصيدلية</h1>
+    <p>تصفح العروض المتاحة، اختر العرض المناسب، وسنستقبل طلبك ليتواصل معك فريق الصيدلية.</p>
+    {% if not session.get('customer_id') %}
+      <a class="btn light" href="{{ url_for('customer_login') }}">سجّل بياناتك واطلب</a>
+    {% else %}
+      <span class="signed">أنت مسجل دخول بالفعل ✓</span>
+    {% endif %}
+  </div>
+  <div class="hero-symbol">✚</div>
+</section>
+
+<div class="section-heading">
+  <div><span class="eyebrow">تسوق بسهولة</span><h2>العروض الحالية</h2></div>
+  <span class="muted">{{ offers|length }} عرض متاح</span>
+</div>
+
+{% if offers %}
+<div class="offers-grid">
+  {% for offer in offers %}
+  <article class="offer-card">
+    {% if offer.image %}
+      <img class="offer-image" src="{{ url_for('static', filename='uploads/' ~ offer.image) }}" alt="{{ offer.title }}">
+    {% else %}
+      <div class="image-placeholder">✚</div>
+    {% endif %}
+    <div class="offer-content">
+      <h3>{{ offer.title }}</h3>
+      <p class="description">{{ offer.description or 'عرض من عروض الصيدلية.' }}</p>
+      <div class="prices">
+        <strong>{{ '%.2f'|format(offer.price) }} جنيه</strong>
+        {% if offer.old_price and offer.old_price > offer.price %}
+          <del>{{ '%.2f'|format(offer.old_price) }} جنيه</del>
+          <span class="discount">خصم {{ (((offer.old_price-offer.price)/offer.old_price)*100)|round|int }}%</span>
+        {% endif %}
+      </div>
+      <form method="post" action="{{ url_for('place_order', offer_id=offer.id) }}" class="order-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>الكمية
+          <input type="number" name="quantity" min="1" max="20" value="1">
+        </label>
+        <button class="btn" type="submit">اطلب الآن</button>
+      </form>
+      <div class="offer-phones" style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #ccc; font-size: 0.9rem; text-align: center;">
+        <span style="display: block; font-weight: bold; margin-bottom: 4px;">📞 للطلب والاستفسار:</span>
+        <a href="tel:01201112031" style="color: inherit; text-decoration: none; font-weight: bold;">01201112031</a>
+        <span style="margin: 0 6px;">|</span>
+        <a href="tel:01100691500" style="color: inherit; text-decoration: none; font-weight: bold;">01100691500</a>
+      </div>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state"><div>✚</div><h3>لا توجد عروض منشورة حالياً</h3><p>تابعنا للاطلاع على العروض الجديدة.</p></div>
+{% endif %}
+
+<footer style="margin-top: 40px; padding: 20px; text-align: center; border-top: 1px solid #ddd; border-radius: 8px;">
+  <div style="margin-bottom: 12px; font-size: 1.05rem;">
+    <strong>المدير / للشكاوى: </strong>
+    <a href="tel:01001497324" style="color: inherit; text-decoration: none; font-weight: bold;">📞 01001497324</a>
+  </div>
+  <div style="font-weight: bold; font-size: 0.95rem; opacity: 0.85;">
+    تنفيذ المهندس محمد رضوان
+  </div>
+</footer>
+{% endblock %}

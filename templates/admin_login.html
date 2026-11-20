@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}دخول الإدارة{% endblock %}
+{% block content %}
+<section class="form-card narrow">
+  <span class="eyebrow">منطقة آمنة</span>
+  <h1>دخول الإدارة</h1>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>اسم المستخدم<input name="username" required autocomplete="username"></label>
+    <label>كلمة المرور<input type="password" name="password" required autocomplete="current-password"></label>
+    <button class="btn full" type="submit">دخول لوحة التحكم</button>
+  </form>
+</section>
+{% endblock %}

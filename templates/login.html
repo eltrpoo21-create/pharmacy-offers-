@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}تسجيل العميل - صيدليتك للعروض{% endblock %}
+{% block content %}
+<section class="form-card narrow">
+  <span class="eyebrow">مرحباً بك</span>
+  <h1>بيانات العميل</h1>
+  <p class="muted">اكتب اسمك ورقم هاتفك للانتقال إلى العروض وإرسال طلبك.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>الاسم بالكامل<input name="name" required minlength="2" maxlength="100" placeholder="مثال: أحمد محمد"></label>
+    <label>رقم الهاتف<input name="phone" required inputmode="tel" maxlength="20" placeholder="01xxxxxxxxx"></label>
+    <button class="btn full" type="submit">الدخول إلى العروض</button>
+  </form>
+  <p class="small-note">تنبيه: هذه النسخة التجريبية لا تتحقق برسالة SMS من ملكية رقم الهاتف؛ لا تدخل بيانات حساسة.</p>
+</section>
+{% endblock %}
