@@ -15,9 +15,12 @@ from werkzeug.utils import secure_filename
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "store.db"
-UPLOAD_DIR = BASE_DIR / "static" / "uploads"
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+# تحديد مسار التخزين الدائم من Railway أو استخدام المجلد الحالي كبديل
+DATA_DIR = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", BASE_DIR))
+
+DB_PATH = DATA_DIR / "store.db"
+UPLOAD_DIR = DATA_DIR / "uploads"
+
 
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "Mohamed2005"
