@@ -230,3 +230,47 @@ def add_offer():
     old_price_raw = request.form.get("old_price", "").strip()
     old_price = float(old_price_raw) if old_price_raw else None
     image_filename = ""
+    if "image" in request.files and request.files["image"].filename:
+        image_filename = save_image(request.files["image"])
+    if title and price > 0:
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO offers(title, description, old_price, price, image) VALUES(?, ?, ?, ?, ?)",
+                (title, description, old_price, price, image_filename),
+            )
+        flash("تمت إضافة العرض بنجاح.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/offers/delete/<int:offer_id>", methods=["POST"])
+@admin_required
+def delete_offer(offer_id):
+    with db() as conn:
+        conn.execute("DELETE FROM offers WHERE id=?", (offer_id,))
+    flash("تم حذف العرض.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/customers/verify/<int:customer_id>", methods=["POST"])
+@admin_required
+def verify_customer(customer_id):
+    with db() as conn:
+        conn.execute("UPDATE customers SET is_verified=1 WHERE id=?", (customer_id,))
+    flash("تم تفعيل حساب العميل.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/orders/status/<int:order_id>", methods=["POST"])
+@admin_required
+def update_order_status(order_id):
+    status = request.form.get("status", "تم التواصل").strip()
+    with db() as conn:
+        conn.execute("UPDATE orders SET status=? WHERE id=?", (status, order_id))
+    flash("تم تحديث حالة الطلب.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+init_db()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
