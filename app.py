@@ -24,12 +24,13 @@ DB_PATH = BASE_DIR / "store.db"
 UPLOAD_DIR = BASE_DIR / "static" / "uploads"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 
-# رقم الواتساب الذي ستصلك عليه رسائل تفعيل العملاء (بصيغة دولية بدون +)
 ADMIN_WHATSAPP = "201001497324"
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", secrets.token_hex(32))
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB per upload
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 csrf = CSRFProtect(app)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -52,7 +53,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # تحديث تلقائي لقاعدة البيانات القديمة إذا كانت موجودة بدون الأعمدة الجديدة
         cols = [row["name"] for row in conn.execute("PRAGMA table_info(customers)").fetchall()]
         if "otp_code" not in cols:
             conn.execute("ALTER TABLE customers ADD COLUMN otp_code TEXT DEFAULT ''")
@@ -102,7 +102,7 @@ def admin_required(fn):
 
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1).lower() in ALLOWED_EXTENSIONS
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 def save_image(file):
@@ -110,7 +110,7 @@ def save_image(file):
         return ""
     if not allowed_file(file.filename):
         raise ValueError("صيغة الصورة غير مدعومة. استخدم JPG أو PNG أو WEBP.")
-    ext = file.filename.rsplit(".", 1).lower()
+    ext = file.filename.rsplit(".", 1)[1].lower()
     filename = secure_filename(f"{secrets.token_hex(12)}.{ext}")
     file.save(UPLOAD_DIR / filename)
     return filename
@@ -118,7 +118,7 @@ def save_image(file):
 
 def send_order_email(order_id, customer, offer, quantity):
     recipient = os.getenv("ORDER_EMAIL", "eltrpoo21@gmail.com")
-    smtp_host = os.getenv("SMTP_HOST", "://gmail.com")
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_user = os.getenv("SMTP_USER", "")
     smtp_password = os.getenv("SMTP_PASSWORD", "")
@@ -144,7 +144,6 @@ def send_order_email(order_id, customer, offer, quantity):
 الإجمالي: {offer['price'] * quantity:.2f} جنيه
 
 يرجى التواصل مع العميل لتأكيد التوفر والتفاصيل.
-هذا الطلب ليس تأكيدًا للبيع أو حجزًا نهائيًا.
 """
     )
 
@@ -186,8 +185,7 @@ def customer_login():
         raw_phone = request.form.get("phone", "").strip()
         digits = normalize_egypt_phone(raw_phone)
 
-        # التحقق من الاسم ورقم الهاتف المصري الصحيح
-        if len(name) < 2 or not re.match(r"^01[0-9]{8}$", digits):
+        if len(name) < 2 or not re.match(r"^01[0-9]{9}$", digits):
             flash("اكتب اسمًا صحيحًا ورقم موبايل مصري صحيح مكون من 11 رقماً.", "error")
             return render_template("login.html")
 
@@ -197,16 +195,14 @@ def customer_login():
             ).fetchone()
 
             if existing:
-                # منع تكرار التسجيل بنفس الرقم
                 if existing["is_verified"] == 1:
-                    flash("عذراً، هذا الرقم مسجل ومفعّل لدينا بالفعل ولا يمكن التسجيل به مرة أخرى.", "error")
-                    return render_template("login.html")
+                    session["customer_id"] = existing["id"]
+                    flash("تم تسجيل دخولك بنجاح!", "success")
+                    return redirect(url_for("home"))
                 else:
-                    # إذا سجل من قبل ولم يكمل التفعيل، نعيد توجيهه لصفحة التفعيل
                     session["pending_customer_id"] = existing["id"]
                     return redirect(url_for("verify_whatsapp"))
 
-            # توليد كود تحقق من 4 أرقام للعميل الجديد
             otp_code = str(secrets.randbelow(9000) + 1000)
             cur = conn.execute(
                 "INSERT INTO customers(name, phone, otp_code, is_verified) VALUES(?, ?, ?, 0)",
@@ -233,7 +229,6 @@ def verify_whatsapp():
         session.pop("pending_customer_id", None)
         return redirect(url_for("customer_login"))
 
-    # إذا قام الأدمن بتفعيل الحساب، يتم تسجيل دخوله تلقائياً عند تحديث الصفحة
     if customer["is_verified"] == 1:
         session.pop("pending_customer_id", None)
         session["customer_id"] = customer["id"]
@@ -284,12 +279,17 @@ def place_order(offer_id):
         if not offer or not customer:
             abort(404)
 
-        # حماية إضافية: منع الطلب إذا تم إلغاء تفعيل العميل
         if customer["is_verified"] != 1:
             session.pop("customer_id", None)
-app.config["PROPAGATE_EXCEPTIONS"] = True
-app.debug = True
-init_db()
+            flash("حسابك غير مفعّل حالياً.", "error")
+            return redirect(url_for("customer_login"))
 
-if __name__ == "__main__":
-    app.run(debug=True)
+        cur = conn.execute(
+            "INSERT INTO orders(customer_id, offer_id, quantity) VALUES(?, ?, ?)",
+            (customer_id, offer_id, quantity)
+        )
+        order_id = cur.lastrowid
+
+    send_order_email(order_id, customer, offer, quantity)
+    flash("تم إرسال طلبك بنجاح! سيتواصل معك فريق الصيدلية قريباً.", "success")
+    return redirect(url_for("home"))
