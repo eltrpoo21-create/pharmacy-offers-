@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}تأكيد رقم الهاتف - صيدليتك للعروض{% endblock %}
+{% block content %}
+<section class="form-card narrow" style="text-align: center;">
+  <span class="eyebrow">خطوة أخيرة للتفعيل</span>
+  <h1>تأكيد ملكية رقم الهاتف</h1>
+  <p class="muted">
+    أهلاً <strong>{{ customer.name }}</strong>، لضمان جدية الطلبات ومنع انتحال الأرقام، يرجى تأكيد رقمك (<strong>{{ customer.phone }}</strong>) عبر واتساب.
+  </p>
+
+  <div style="background: #f4f6f8; padding: 15px; border-radius: 8px; margin: 15px 0;">
+    <span style="display: block; font-size: 14px; color: #555;">كود التفعيل الخاص بك:</span>
+    <strong style="font-size: 28px; letter-spacing: 5px; color: #1b6ca8;">{{ customer.otp_code }}</strong>
+  </div>
+
+  <a class="btn full" href="{{ wa_url }}" target="_blank" style="background-color: #25D366; color: #fff; margin-bottom: 12px; display: inline-block; text-decoration: none;">
+    إرسال رسالة التفعيل عبر واتساب
+  </a>
+
+  <a class="btn secondary full" href="{{ url_for('verify_whatsapp') }}" style="display: inline-block; text-decoration: none;">
+    تحديث الصفحة بعد الإرسال
+  </a>
+
+  <p class="small-note" style="margin-top: 15px;">
+    ملحوظة: يجب إرسال رسالة واتساب من نفس الرقم المسجل ({{ customer.phone }}) ليتم تفعيل حسابك فوراً من الإدارة.
+  </p>
+</section>
+{% endblock %}
