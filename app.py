@@ -288,6 +288,7 @@ def place_order(offer_id):
         if customer["is_verified"] != 1:
             session.pop("customer_id", None)
 app.config["PROPAGATE_EXCEPTIONS"] = True
+app.debug = True
 init_db()
 
 if __name__ == "__main__":
