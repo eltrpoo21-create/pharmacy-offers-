@@ -1,10 +1,12 @@
 import os
+import re
 import sqlite3
 import secrets
 import smtplib
 from email.message import EmailMessage
 from functools import wraps
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 from flask import (
@@ -21,6 +23,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "store.db"
 UPLOAD_DIR = BASE_DIR / "static" / "uploads"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+
+# رقم الواتساب الذي ستصلك عليه رسائل تفعيل العملاء (بصيغة دولية بدون +)
+ADMIN_WHATSAPP = "201001497324"
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", secrets.token_hex(32))
@@ -42,9 +47,18 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 phone TEXT NOT NULL UNIQUE,
+                otp_code TEXT DEFAULT '',
+                is_verified INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # تحديث تلقائي لقاعدة البيانات القديمة إذا كانت موجودة بدون الأعمدة الجديدة
+        cols = [row["name"] for row in conn.execute("PRAGMA table_info(customers)").fetchall()]
+        if "otp_code" not in cols:
+            conn.execute("ALTER TABLE customers ADD COLUMN otp_code TEXT DEFAULT ''")
+        if "is_verified" not in cols:
+            conn.execute("ALTER TABLE customers ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS offers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,6 +85,13 @@ def init_db():
         """)
 
 
+def normalize_egypt_phone(raw_phone):
+    digits = "".join(ch for ch in raw_phone if ch.isdigit())
+    if digits.startswith("20") and len(digits) == 12:
+        digits = "0" + digits[2:]
+    return digits
+
+
 def admin_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -81,7 +102,7 @@ def admin_required(fn):
 
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return "." in filename and filename.rsplit(".", 1).lower() in ALLOWED_EXTENSIONS
 
 
 def save_image(file):
@@ -89,7 +110,7 @@ def save_image(file):
         return ""
     if not allowed_file(file.filename):
         raise ValueError("صيغة الصورة غير مدعومة. استخدم JPG أو PNG أو WEBP.")
-    ext = file.filename.rsplit(".", 1)[1].lower()
+    ext = file.filename.rsplit(".", 1).lower()
     filename = secure_filename(f"{secrets.token_hex(12)}.{ext}")
     file.save(UPLOAD_DIR / filename)
     return filename
@@ -97,7 +118,7 @@ def save_image(file):
 
 def send_order_email(order_id, customer, offer, quantity):
     recipient = os.getenv("ORDER_EMAIL", "eltrpoo21@gmail.com")
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_host = os.getenv("SMTP_HOST", "://gmail.com")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_user = os.getenv("SMTP_USER", "")
     smtp_password = os.getenv("SMTP_PASSWORD", "")
@@ -162,28 +183,78 @@ def home():
 def customer_login():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
-        phone = request.form.get("phone", "").strip()
-        digits = "".join(ch for ch in phone if ch.isdigit())
-        if len(name) < 2 or len(digits) < 8 or len(digits) > 15:
-            flash("اكتب اسمًا صحيحًا ورقم هاتف صحيحًا.", "error")
+        raw_phone = request.form.get("phone", "").strip()
+        digits = normalize_egypt_phone(raw_phone)
+
+        # التحقق من الاسم ورقم الهاتف المصري الصحيح
+        if len(name) < 2 or not re.match(r"^01[0-9]{8}$", digits):
+            flash("اكتب اسمًا صحيحًا ورقم موبايل مصري صحيح مكون من 11 رقماً.", "error")
             return render_template("login.html")
+
         with db() as conn:
-            conn.execute(
-                """INSERT INTO customers(name, phone) VALUES(?, ?)
-                   ON CONFLICT(phone) DO UPDATE SET name=excluded.name""",
-                (name, digits)
-            )
-            customer = conn.execute(
+            existing = conn.execute(
                 "SELECT * FROM customers WHERE phone=?", (digits,)
             ).fetchone()
-        session["customer_id"] = customer["id"]
-        return redirect(url_for("home"))
+
+            if existing:
+                # منع تكرار التسجيل بنفس الرقم
+                if existing["is_verified"] == 1:
+                    flash("عذراً، هذا الرقم مسجل ومفعّل لدينا بالفعل ولا يمكن التسجيل به مرة أخرى.", "error")
+                    return render_template("login.html")
+                else:
+                    # إذا سجل من قبل ولم يكمل التفعيل، نعيد توجيهه لصفحة التفعيل
+                    session["pending_customer_id"] = existing["id"]
+                    return redirect(url_for("verify_whatsapp"))
+
+            # توليد كود تحقق من 4 أرقام للعميل الجديد
+            otp_code = str(secrets.randbelow(9000) + 1000)
+            cur = conn.execute(
+                "INSERT INTO customers(name, phone, otp_code, is_verified) VALUES(?, ?, ?, 0)",
+                (name, digits, otp_code)
+            )
+            session["pending_customer_id"] = cur.lastrowid
+
+        return redirect(url_for("verify_whatsapp"))
     return render_template("login.html")
+
+
+@app.route("/verify-whatsapp")
+def verify_whatsapp():
+    pending_id = session.get("pending_customer_id")
+    if not pending_id:
+        return redirect(url_for("customer_login"))
+
+    with db() as conn:
+        customer = conn.execute(
+            "SELECT * FROM customers WHERE id=?", (pending_id,)
+        ).fetchone()
+
+    if not customer:
+        session.pop("pending_customer_id", None)
+        return redirect(url_for("customer_login"))
+
+    # إذا قام الأدمن بتفعيل الحساب، يتم تسجيل دخوله تلقائياً عند تحديث الصفحة
+    if customer["is_verified"] == 1:
+        session.pop("pending_customer_id", None)
+        session["customer_id"] = customer["id"]
+        flash("تم تفعيل حسابك بنجاح! يمكنك الآن طلب العروض.", "success")
+        return redirect(url_for("home"))
+
+    wa_text = (
+        f"مرحباً، أرغب في تفعيل حسابي في صيدليتك للعروض\n"
+        f"الاسم: {customer['name']}\n"
+        f"رقم الهاتف: {customer['phone']}\n"
+        f"كود التفعيل: {customer['otp_code']}"
+    )
+    wa_url = f"https://wa.me{ADMIN_WHATSAPP}?text={quote(wa_text)}"
+
+    return render_template("verify.html", customer=customer, wa_url=wa_url)
 
 
 @app.route("/logout")
 def customer_logout():
     session.pop("customer_id", None)
+    session.pop("pending_customer_id", None)
     return redirect(url_for("home"))
 
 
@@ -191,6 +262,9 @@ def customer_logout():
 def place_order(offer_id):
     customer_id = session.get("customer_id")
     if not customer_id:
+        if session.get("pending_customer_id"):
+            flash("يجب تأكيد رقم هاتفك عبر واتساب وتفعيل الحساب أولاً قبل إرسال أي طلب.", "error")
+            return redirect(url_for("verify_whatsapp"))
         flash("سجل اسمك ورقم هاتفك أولاً لإرسال الطلب.", "error")
         return redirect(url_for("customer_login"))
 
@@ -209,165 +283,7 @@ def place_order(offer_id):
         ).fetchone()
         if not offer or not customer:
             abort(404)
-        cur = conn.execute(
-            "INSERT INTO orders(customer_id, offer_id, quantity) VALUES(?, ?, ?)",
-            (customer_id, offer_id, quantity)
-        )
-        order_id = cur.lastrowid
 
-    email_sent = send_order_email(order_id, customer, offer, quantity)
-    return render_template("order_done.html", order_id=order_id, email_sent=email_sent)
-
-
-@app.route("/admin/login", methods=["GET", "POST"])
-def admin_login():
-    if request.method == "POST":
-        username = os.getenv("ADMIN_USERNAME", "admin")
-        password_hash = os.getenv("ADMIN_PASSWORD_HASH", "")
-        password = request.form.get("password", "")
-        submitted_user = request.form.get("username", "")
-        if submitted_user == username and password_hash and check_password_hash(password_hash, password):
-            session["admin"] = True
-            return redirect(url_for("admin_dashboard"))
-        flash("بيانات الدخول غير صحيحة. راجع إعدادات المدير في ملف .env.", "error")
-    return render_template("admin_login.html")
-
-
-@app.route("/admin/logout")
-def admin_logout():
-    session.pop("admin", None)
-    return redirect(url_for("home"))
-
-
-@app.route("/admin")
-@admin_required
-def admin_dashboard():
-    with db() as conn:
-        offers = conn.execute("SELECT * FROM offers ORDER BY id DESC").fetchall()
-        orders = conn.execute("""
-            SELECT orders.*, customers.name AS customer_name,
-                   customers.phone AS customer_phone, offers.title AS offer_title,
-                   offers.price AS offer_price
-            FROM orders
-            JOIN customers ON customers.id=orders.customer_id
-            JOIN offers ON offers.id=orders.offer_id
-            ORDER BY orders.id DESC LIMIT 100
-        """).fetchall()
-        customers = conn.execute(
-            "SELECT * FROM customers ORDER BY id DESC LIMIT 100"
-        ).fetchall()
-    return render_template(
-        "admin.html", offers=offers, orders=orders, customers=customers
-    )
-
-
-@app.route("/admin/offers/add", methods=["POST"])
-@admin_required
-def add_offer():
-    title = request.form.get("title", "").strip()
-    description = request.form.get("description", "").strip()
-    try:
-        price = float(request.form.get("price", ""))
-        old_price_raw = request.form.get("old_price", "").strip()
-        old_price = float(old_price_raw) if old_price_raw else None
-        if price <= 0 or (old_price is not None and old_price <= 0):
-            raise ValueError()
-    except ValueError:
-        flash("راجع الأسعار، يجب أن تكون أرقامًا أكبر من صفر.", "error")
-        return redirect(url_for("admin_dashboard"))
-    if not title:
-        flash("اسم العرض مطلوب.", "error")
-        return redirect(url_for("admin_dashboard"))
-    try:
-        image = save_image(request.files.get("image"))
-    except ValueError as exc:
-        flash(str(exc), "error")
-        return redirect(url_for("admin_dashboard"))
-    with db() as conn:
-        conn.execute(
-            """INSERT INTO offers(title, description, old_price, price, image)
-               VALUES(?, ?, ?, ?, ?)""",
-            (title, description, old_price, price, image)
-        )
-    flash("تمت إضافة العرض.", "success")
-    return redirect(url_for("admin_dashboard"))
-
-
-@app.route("/admin/offers/<int:offer_id>/edit", methods=["POST"])
-@admin_required
-def edit_offer(offer_id):
-    title = request.form.get("title", "").strip()
-    description = request.form.get("description", "").strip()
-    try:
-        price = float(request.form.get("price", ""))
-        old_raw = request.form.get("old_price", "").strip()
-        old_price = float(old_raw) if old_raw else None
-        if not title or price <= 0 or (old_price is not None and old_price <= 0):
-            raise ValueError()
-    except ValueError:
-        flash("راجع اسم العرض والأسعار.", "error")
-        return redirect(url_for("admin_dashboard"))
-    with db() as conn:
-        current = conn.execute("SELECT * FROM offers WHERE id=?", (offer_id,)).fetchone()
-        if not current:
-            abort(404)
-        image = current["image"]
-        try:
-            new_image = save_image(request.files.get("image"))
-            if new_image:
-                image = new_image
-        except ValueError as exc:
-            flash(str(exc), "error")
-            return redirect(url_for("admin_dashboard"))
-        conn.execute(
-            """UPDATE offers SET title=?, description=?, old_price=?, price=?, image=?
-               WHERE id=?""",
-            (title, description, old_price, price, image, offer_id)
-        )
-    flash("تم تحديث العرض.", "success")
-    return redirect(url_for("admin_dashboard"))
-
-
-@app.route("/admin/offers/<int:offer_id>/toggle", methods=["POST"])
-@admin_required
-def toggle_offer(offer_id):
-    with db() as conn:
-        conn.execute(
-            "UPDATE offers SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=?",
-            (offer_id,)
-        )
-    flash("تم تغيير حالة العرض.", "success")
-    return redirect(url_for("admin_dashboard"))
-
-
-@app.route("/admin/offers/<int:offer_id>/delete", methods=["POST"])
-@admin_required
-def delete_offer(offer_id):
-    with db() as conn:
-        conn.execute("DELETE FROM offers WHERE id=?", (offer_id,))
-    flash("تم حذف العرض.", "success")
-    return redirect(url_for("admin_dashboard"))
-
-
-@app.route("/admin/orders/<int:order_id>/status", methods=["POST"])
-@admin_required
-def update_order_status(order_id):
-    status = request.form.get("status", "جديد")
-    allowed = {"جديد", "تم التواصل", "مكتمل", "ملغي"}
-    if status not in allowed:
-        abort(400)
-    with db() as conn:
-        conn.execute("UPDATE orders SET status=? WHERE id=?", (status, order_id))
-    flash("تم تحديث حالة الطلب.", "success")
-    return redirect(url_for("admin_dashboard"))
-
-
-@app.errorhandler(413)
-def too_large(_error):
-    return "حجم الصورة أكبر من 5 ميجابايت. ارجع واستخدم صورة أصغر.", 413
-
-
-init_db()
-
-if __name__ == "__main__":
-    app.run(debug=True)
+        # حماية إضافية: منع الطلب إذا تم إلغاء تفعيل العميل
+        if customer["is_verified"] != 1:
+            session.pop("customer_id", None)
