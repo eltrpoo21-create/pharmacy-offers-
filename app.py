@@ -287,3 +287,8 @@ def place_order(offer_id):
         # حماية إضافية: منع الطلب إذا تم إلغاء تفعيل العميل
         if customer["is_verified"] != 1:
             session.pop("customer_id", None)
+app.config["PROPAGATE_EXCEPTIONS"] = True
+init_db()
+
+if __name__ == "__main__":
+    app.run(debug=True)
