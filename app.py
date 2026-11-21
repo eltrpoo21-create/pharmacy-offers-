@@ -14,7 +14,6 @@ from flask import (
     flash, abort
 )
 from flask_wtf.csrf import CSRFProtect
-from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 load_dotenv()
@@ -118,13 +117,12 @@ def save_image(file):
 
 def send_order_email(order_id, customer, offer, quantity):
     recipient = os.getenv("ORDER_EMAIL", "eltrpoo21@gmail.com")
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_host = os.getenv("SMTP_HOST", "://gmail.com")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_user = os.getenv("SMTP_USER", "")
     smtp_password = os.getenv("SMTP_PASSWORD", "")
 
     if not smtp_user or not smtp_password:
-        app.logger.warning("Email not sent: SMTP credentials are not configured.")
         return False
 
     msg = EmailMessage()
@@ -132,31 +130,8 @@ def send_order_email(order_id, customer, offer, quantity):
     msg["From"] = smtp_user
     msg["To"] = recipient
     msg.set_content(
-        f"""وصلك طلب جديد من موقع صيدليتك للعروض
-
-رقم الطلب: {order_id}
-اسم العميل: {customer['name']}
-رقم الهاتف: {customer['phone']}
-
-العرض: {offer['title']}
-السعر الحالي: {offer['price']:.2f} جنيه
-الكمية: {quantity}
-الإجمالي: {offer['price'] * quantity:.2f} جنيه
-
-يرجى التواصل مع العميل لتأكيد التوفر والتفاصيل.
-"""
+        f"رقم الطلب: {order_id}\nالعميل: {customer['name']}\nالهاتف: {customer['phone']}\nالعرض: {offer['title']}\nالكمية: {quantity}\nالإجمالي: {offer['price'] * quantity:.2f} جنيه"
     )
-
-    image_path = UPLOAD_DIR / offer["image"] if offer["image"] else None
-    if image_path and image_path.exists():
-        import mimetypes
-        ctype, _ = mimetypes.guess_type(str(image_path))
-        maintype, subtype = (ctype or "image/jpeg").split("/", 1)
-        with open(image_path, "rb") as img:
-            msg.add_attachment(
-                img.read(), maintype=maintype, subtype=subtype,
-                filename=image_path.name
-            )
 
     try:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
@@ -165,16 +140,13 @@ def send_order_email(order_id, customer, offer, quantity):
             server.send_message(msg)
         return True
     except Exception:
-        app.logger.exception("Could not send order email")
         return False
 
 
 @app.route("/")
 def home():
     with db() as conn:
-        offers = conn.execute(
-            "SELECT * FROM offers WHERE active=1 ORDER BY id DESC"
-        ).fetchall()
+        offers = conn.execute("SELECT * FROM offers WHERE active=1 ORDER BY id DESC").fetchall()
     return render_template("home.html", offers=offers)
 
 
@@ -190,10 +162,7 @@ def customer_login():
             return render_template("login.html")
 
         with db() as conn:
-            existing = conn.execute(
-                "SELECT * FROM customers WHERE phone=?", (digits,)
-            ).fetchone()
-
+            existing = conn.execute("SELECT * FROM customers WHERE phone=?", (digits,)).fetchone()
             if existing:
                 if existing["is_verified"] == 1:
                     session["customer_id"] = existing["id"]
@@ -221,9 +190,7 @@ def verify_whatsapp():
         return redirect(url_for("customer_login"))
 
     with db() as conn:
-        customer = conn.execute(
-            "SELECT * FROM customers WHERE id=?", (pending_id,)
-        ).fetchone()
+        customer = conn.execute("SELECT * FROM customers WHERE id=?", (pending_id,)).fetchone()
 
     if not customer:
         session.pop("pending_customer_id", None)
@@ -235,14 +202,8 @@ def verify_whatsapp():
         flash("تم تفعيل حسابك بنجاح! يمكنك الآن طلب العروض.", "success")
         return redirect(url_for("home"))
 
-    wa_text = (
-        f"مرحباً، أرغب في تفعيل حسابي في صيدليتك للعروض\n"
-        f"الاسم: {customer['name']}\n"
-        f"رقم الهاتف: {customer['phone']}\n"
-        f"كود التفعيل: {customer['otp_code']}"
-    )
+    wa_text = f"مرحباً، أرغب في تفعيل حسابي في صيدليتك للعروض\nالاسم: {customer['name']}\nرقم الهاتف: {customer['phone']}\nكود التفعيل: {customer['otp_code']}"
     wa_url = f"https://wa.me{ADMIN_WHATSAPP}?text={quote(wa_text)}"
-
     return render_template("verify.html", customer=customer, wa_url=wa_url)
 
 
@@ -258,7 +219,7 @@ def place_order(offer_id):
     customer_id = session.get("customer_id")
     if not customer_id:
         if session.get("pending_customer_id"):
-            flash("يجب تأكيد رقم هاتفك عبر واتساب وتفعيل الحساب أولاً قبل إرسال أي طلب.", "error")
+            flash("يجب تأكيد رقم هاتفك عبر واتساب وتفعيل الحساب أولاً.", "error")
             return redirect(url_for("verify_whatsapp"))
         flash("سجل اسمك ورقم هاتفك أولاً لإرسال الطلب.", "error")
         return redirect(url_for("customer_login"))
@@ -270,12 +231,8 @@ def place_order(offer_id):
     quantity = max(1, min(quantity, 20))
 
     with db() as conn:
-        offer = conn.execute(
-            "SELECT * FROM offers WHERE id=? AND active=1", (offer_id,)
-        ).fetchone()
-        customer = conn.execute(
-            "SELECT * FROM customers WHERE id=?", (customer_id,)
-        ).fetchone()
+        offer = conn.execute("SELECT * FROM offers WHERE id=? AND active=1", (offer_id,)).fetchone()
+        customer = conn.execute("SELECT * FROM customers WHERE id=?", (customer_id,)).fetchone()
         if not offer or not customer:
             abort(404)
 
@@ -293,3 +250,31 @@ def place_order(offer_id):
     send_order_email(order_id, customer, offer, quantity)
     flash("تم إرسال طلبك بنجاح! سيتواصل معك فريق الصيدلية قريباً.", "success")
     return redirect(url_for("home"))
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session["admin"] = True
+            return redirect(url_for("admin_dashboard"))
+        flash("بيانات الدخول غير صحيحة.", "error")
+    return render_template("admin_login.html")
+
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.pop("admin", None)
+    return redirect(url_for("home"))
+
+
+@app.route("/admin")
+@admin_required
+def admin_dashboard():
+    with db() as conn:
+        offers = conn.execute("SELECT * FROM offers ORDER BY id DESC").fetchall()
+        customers = conn.execute("SELECT * FROM customers ORDER BY id DESC").fetchall()
+        orders = conn.execute("""
+            SELECT orders.*, customers.name AS customer_name, customers.phone AS customer_phone,
