@@ -6,7 +6,6 @@ import smtplib
 from email.message import EmailMessage
 from functools import wraps
 from pathlib import Path
-from urllib.parse import quote
 
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, session, flash, abort
@@ -20,9 +19,8 @@ DB_PATH = BASE_DIR / "store.db"
 UPLOAD_DIR = BASE_DIR / "static" / "uploads"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 
-ADMIN_WHATSAPP = "201001497324"
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Muhammad2005")
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", secrets.token_hex(32))
@@ -39,12 +37,26 @@ def db():
 
 def init_db():
     with db() as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT NOT NULL UNIQUE, otp_code TEXT DEFAULT '', is_verified INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                phone TEXT NOT NULL UNIQUE,
+                address TEXT NOT NULL DEFAULT '',
+                otp_code TEXT DEFAULT '',
+                is_verified INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         cols = [row["name"] for row in conn.execute("PRAGMA table_info(customers)").fetchall()]
+        if "address" not in cols:
+            conn.execute("ALTER TABLE customers ADD COLUMN address TEXT NOT NULL DEFAULT ''")
         if "otp_code" not in cols:
             conn.execute("ALTER TABLE customers ADD COLUMN otp_code TEXT DEFAULT ''")
         if "is_verified" not in cols:
-            conn.execute("ALTER TABLE customers ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0")
+            conn.execute("ALTER TABLE customers ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 1")
+        conn.execute("UPDATE customers SET is_verified = 1")
+
         conn.execute("CREATE TABLE IF NOT EXISTS offers (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, description TEXT DEFAULT '', old_price REAL, price REAL NOT NULL, image TEXT DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         conn.execute("CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL, offer_id INTEGER NOT NULL, quantity INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'جديد', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(customer_id) REFERENCES customers(id), FOREIGN KEY(offer_id) REFERENCES offers(id))")
 
@@ -66,7 +78,7 @@ def admin_required(fn):
 
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1).lower() in ALLOWED_EXTENSIONS
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 def save_image(file):
@@ -74,7 +86,7 @@ def save_image(file):
         return ""
     if not allowed_file(file.filename):
         raise ValueError("صيغة الصورة غير مدعومة.")
-    ext = file.filename.rsplit(".", 1).lower()
+    ext = file.filename.rsplit(".", 1)[1].lower()
     filename = secure_filename(f"{secrets.token_hex(12)}.{ext}")
     file.save(UPLOAD_DIR / filename)
     return filename
@@ -92,7 +104,15 @@ def send_order_email(order_id, customer, offer, quantity):
     msg["Subject"] = f"طلب عرض جديد رقم #{order_id} - صيدليتك للعروض"
     msg["From"] = smtp_user
     msg["To"] = recipient
-    msg.set_content(f"رقم الطلب: {order_id}\nالعميل: {customer['name']}\nالهاتف: {customer['phone']}\nالعرض: {offer['title']}\nالكمية: {quantity}\nالإجمالي: {offer['price'] * quantity:.2f} جنيه")
+    msg.set_content(
+        f"رقم الطلب: {order_id}\n"
+        f"العميل: {customer['name']}\n"
+        f"الهاتف: {customer['phone']}\n"
+        f"العنوان: {customer['address']}\n"
+        f"العرض: {offer['title']}\n"
+        f"الكمية: {quantity}\n"
+        f"الإجمالي: {offer['price'] * quantity:.2f} جنيه"
+    )
     try:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
             server.starttls()
@@ -115,51 +135,35 @@ def customer_login():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         raw_phone = request.form.get("phone", "").strip()
+        address = request.form.get("address", "").strip()
         digits = normalize_egypt_phone(raw_phone)
-        if len(name) < 2 or not re.match(r"^01[0-9]{9}$", digits):
-            flash("اكتب اسمًا صحيحًا ورقم موبايل مصري صحيح مكون من 11 رقماً.", "error")
+
+        if len(name) < 2 or not re.match(r"^01[0-9]{9}$", digits) or len(address) < 5:
+            flash("اكتب اسماً صحيحاً، ورقم موبايل مصري صحيح (11 رقماً)، وعنواناً واضحاً.", "error")
             return render_template("login.html")
+
         with db() as conn:
             existing = conn.execute("SELECT * FROM customers WHERE phone=?", (digits,)).fetchone()
             if existing:
-                if existing["is_verified"] == 1:
-                    session["customer_id"] = existing["id"]
-                    flash("تم تسجيل دخولك بنجاح!", "success")
-                    return redirect(url_for("home"))
-                else:
-                    session["pending_customer_id"] = existing["id"]
-                    return redirect(url_for("verify_whatsapp"))
-            otp_code = str(secrets.randbelow(9000) + 1000)
-            cur = conn.execute("INSERT INTO customers(name, phone, otp_code, is_verified) VALUES(?, ?, ?, 0)", (name, digits, otp_code))
-            session["pending_customer_id"] = cur.lastrowid
-        return redirect(url_for("verify_whatsapp"))
+                conn.execute("UPDATE customers SET name=?, address=?, is_verified=1 WHERE id=?", (name, address, existing["id"]))
+                session["customer_id"] = existing["id"]
+                flash("تم تسجيل دخولك وتحديث بياناتك بنجاح!", "success")
+                return redirect(url_for("home"))
+
+            cur = conn.execute(
+                "INSERT INTO customers(name, phone, address, is_verified) VALUES(?, ?, ?, 1)",
+                (name, digits, address)
+            )
+            session["customer_id"] = cur.lastrowid
+            flash("تم تسجيل حسابك بنجاح!", "success")
+            return redirect(url_for("home"))
+
     return render_template("login.html")
-
-
-@app.route("/verify-whatsapp")
-def verify_whatsapp():
-    pending_id = session.get("pending_customer_id")
-    if not pending_id:
-        return redirect(url_for("customer_login"))
-    with db() as conn:
-        customer = conn.execute("SELECT * FROM customers WHERE id=?", (pending_id,)).fetchone()
-    if not customer:
-        session.pop("pending_customer_id", None)
-        return redirect(url_for("customer_login"))
-    if customer["is_verified"] == 1:
-        session.pop("pending_customer_id", None)
-        session["customer_id"] = customer["id"]
-        flash("تم تفعيل حسابك بنجاح!", "success")
-        return redirect(url_for("home"))
-    wa_text = f"مرحباً، أرغب في تفعيل حسابي في صيدليتك للعروض\nالاسم: {customer['name']}\nرقم الهاتف: {customer['phone']}\nكود التفعيل: {customer['otp_code']}"
-    wa_url = f"https://wa.me{ADMIN_WHATSAPP}?text={quote(wa_text)}"
-    return render_template("verify.html", customer=customer, wa_url=wa_url)
 
 
 @app.route("/logout")
 def customer_logout():
     session.pop("customer_id", None)
-    session.pop("pending_customer_id", None)
     return redirect(url_for("home"))
 
 
@@ -167,10 +171,7 @@ def customer_logout():
 def place_order(offer_id):
     customer_id = session.get("customer_id")
     if not customer_id:
-        if session.get("pending_customer_id"):
-            flash("يجب تأكيد رقم هاتفك عبر واتساب أولاً.", "error")
-            return redirect(url_for("verify_whatsapp"))
-        flash("سجل اسمك ورقم هاتفك أولاً لإرسال الطلب.", "error")
+        flash("سجل اسمك ورقم هاتفك وعنوانك أولاً لإرسال الطلب.", "error")
         return redirect(url_for("customer_login"))
     try:
         quantity = int(request.form.get("quantity", "1"))
@@ -182,14 +183,10 @@ def place_order(offer_id):
         customer = conn.execute("SELECT * FROM customers WHERE id=?", (customer_id,)).fetchone()
         if not offer or not customer:
             abort(404)
-        if customer["is_verified"] != 1:
-            session.pop("customer_id", None)
-            flash("حسابك غير مفعّل حالياً.", "error")
-            return redirect(url_for("customer_login"))
         cur = conn.execute("INSERT INTO orders(customer_id, offer_id, quantity) VALUES(?, ?, ?)", (customer_id, offer_id, quantity))
         order_id = cur.lastrowid
     send_order_email(order_id, customer, offer, quantity)
-    flash("تم إرسال طلبك بنجاح! سيتواصل معك فريق الصيدلية قريباً.", "success")
+    flash("تم إرسال طلبك بنجاح! سنتواصل معك قريباً.", "success")
     return redirect(url_for("home"))
 
 
@@ -217,7 +214,18 @@ def admin_dashboard():
     with db() as conn:
         offers = conn.execute("SELECT * FROM offers ORDER BY id DESC").fetchall()
         customers = conn.execute("SELECT * FROM customers ORDER BY id DESC").fetchall()
-        orders = conn.execute("SELECT orders.*, customers.name AS customer_name, customers.phone AS customer_phone, offers.title AS offer_title, offers.price AS offer_price FROM orders JOIN customers ON orders.customer_id = customers.id JOIN offers ON orders.offer_id = offers.id ORDER BY orders.id DESC").fetchall()
+        orders = conn.execute("""
+            SELECT orders.*, 
+                   customers.name AS customer_name, 
+                   customers.phone AS customer_phone, 
+                   customers.address AS customer_address,
+                   offers.title AS offer_title, 
+                   offers.price AS offer_price 
+            FROM orders 
+            JOIN customers ON orders.customer_id = customers.id 
+            JOIN offers ON orders.offer_id = offers.id 
+            ORDER BY orders.id DESC
+        """).fetchall()
     return render_template("admin.html", offers=offers, customers=customers, orders=orders)
 
 
