@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}تسجيل العميل - صيدليتك للعروض{% endblock %}
+{% block content %}
+<section class="form-card narrow">
+  <span class="eyebrow">مرحباً بك</span>
+  <h1>بيانات العميل</h1>
+  <p class="muted">اكتب اسمك ورقم هاتفك الحقيقي، وسيتم توجيهك لتأكيده عبر واتساب لمرة واحدة فقط.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>الاسم بالكامل<input name="name" required minlength="2" maxlength="100" placeholder="مثال: أحمد محمد"></label>
+    <label>رقم الهاتف<input name="phone" required inputmode="tel" maxlength="15" placeholder="01xxxxxxxxx"></label>
+    <button class="btn full" type="submit">المتابعة لتأكيد الرقم</button>
+  </form>
+  <p class="small-note">ملاحظة: يُسمح بالتسجيل مرة واحدة فقط لكل رقم هاتف، ويجب تأكيد الرقم عبر واتساب قبل إرسال الطلبات.</p>
+</section>
+{% endblock %}
