@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}سلة المشتريات - عروض الصيدلية{% endblock %}
+{% block content %}
+<div class="section-heading">
+  <div><span class="eyebrow">مراجعة الطلب</span><h2>🛒 سلة المشتريات</h2></div>
+  <a class="btn secondary" href="{{ url_for('home') }}">متابعة التسوق</a>
+</div>
+
+{% if items %}
+<section class="admin-panel">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>العرض</th>
+          <th>سعر الوحدة</th>
+          <th>الكمية</th>
+          <th>الإجمالي</th>
+          <th>حذف</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td><strong>{{ item.offer.title }}</strong></td>
+          <td>{{ '%.2f'|format(item.offer.price) }} جنيه</td>
+          <td>
+            <form method="post" action="{{ url_for('update_cart', offer_id=item.offer.id) }}" style="display: flex; gap: 6px; align-items: center;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="number" name="quantity" min="1" max="20" value="{{ item.quantity }}" style="width: 65px;">
+              <button class="btn small" type="submit">تحديث</button>
+            </form>
+          </td>
+          <td><strong>{{ '%.2f'|format(item.subtotal) }} جنيه</strong></td>
+          <td>
+            <form method="post" action="{{ url_for('remove_from_cart', offer_id=item.offer.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn small danger" type="submit">✕</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+    <div style="font-size: 1.25rem;">
+      <strong>إجمالي الفاتورة: {{ '%.2f'|format(total) }} جنيه</strong>
+    </div>
+    <form method="post" action="{{ url_for('checkout_cart') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn" type="submit" style="font-size: 1.05rem; padding: 12px 24px;">
+        ✅ تأكيد وإرسال الطلب الآن
+      </button>
+    </form>
+  </div>
+</section>
+{% else %}
+<div class="empty-state">
+  <div>🛒</div>
+  <h3>سلة المشتريات فارغة</h3>
+  <p>اختر العروض التي تناسبك من الصفحة الرئيسية وأضفها للسلة.</p>
+  <a class="btn" href="{{ url_for('home') }}">تصفح العروض</a>
+</div>
+{% endif %}
+{% endblock %}
