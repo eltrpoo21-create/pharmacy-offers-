@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>عروض الصيدلية</title>
+  <title>{% block title %}عروض الصيدلية{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -12,6 +12,9 @@
       <a class="brand" href="{{ url_for('home') }}">✚ عروض الصيدلية</a>
       <nav class="nav-links">
         <a href="{{ url_for('home') }}">الرئيسية</a>
+        <a href="{{ url_for('view_cart') }}" style="font-weight: bold;">
+          🛒 السلة ({{ cart_count }})
+        </a>
         {% if session.get('customer_id') %}
           <a href="{{ url_for('customer_logout') }}">تسجيل خروج</a>
         {% else %}
