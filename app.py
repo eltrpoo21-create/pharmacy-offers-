@@ -289,6 +289,9 @@ def update_cart(offer_id):
     key = str(offer_id)
     try:
         qty = int(request.form.get("quantity", "1"))
+    except ValueError:
+        qty = 1
+
     if qty <= 0:
         cart.pop(key, None)
     else:
