@@ -7,7 +7,7 @@
 </div>
 
 <section class="admin-panel">
-  <h2>العملاء المسجلون</h2>
+  <h2>العملاء المسجلون ({{ customers|length }})</h2>
   <div class="table-wrap">
   <table>
     <thead>
@@ -15,7 +15,7 @@
         <th>الاسم</th>
         <th>رقم الهاتف</th>
         <th>العنوان</th>
-        <th>إجراء</th>
+        <th>خيارات الحذف</th>
       </tr>
     </thead>
     <tbody>
@@ -25,10 +25,18 @@
         <td>{{ customer.phone }}</td>
         <td>{{ customer.address or 'غير مسجل' }}</td>
         <td>
-          <form method="post" action="{{ url_for('delete_customer', customer_id=customer.id) }}" onsubmit="return confirm('هل تريد حذف هذا العميل؟')">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn small danger" type="submit">حذف</button>
-          </form>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <form method="post" action="{{ url_for('delete_customer', customer_id=customer.id) }}" onsubmit="return confirm('سيتم حذف حساب العميل فقط مع بقاء طلباته السابقة في السجل، هل أنت متأكد؟')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="mode" value="keep_orders">
+              <button class="btn small secondary" type="submit">حذف العميل فقط</button>
+            </form>
+            <form method="post" action="{{ url_for('delete_customer', customer_id=customer.id) }}" onsubmit="return confirm('تحذير: سيتم حذف العميل وجميع طلباته نهائياً!')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="mode" value="with_orders">
+              <button class="btn small danger" type="submit">حذف مع طلباته</button>
+            </form>
+          </div>
         </td>
       </tr>
     {% else %}
@@ -40,7 +48,7 @@
 </section>
 
 <section class="admin-panel">
-  <h2>طلبات العملاء</h2>
+  <h2>طلبات العملاء ({{ orders|length }})</h2>
   <div class="table-wrap">
   <table>
     <thead>
@@ -49,10 +57,10 @@
         <th>العميل</th>
         <th>الهاتف</th>
         <th>العنوان</th>
-        <th>العرض</th>
-        <th>الكمية</th>
+        <th>تفاصيل الطلب</th>
+        <th>الإجمالي</th>
         <th>الحالة</th>
-        <th>تحديث</th>
+        <th>إجراء</th>
       </tr>
     </thead>
     <tbody>
@@ -62,19 +70,25 @@
       <td>{{ order.customer_name }}</td>
       <td>{{ order.customer_phone }}</td>
       <td>{{ order.customer_address or 'غير مسجل' }}</td>
-      <td>{{ order.offer_title }}</td>
-      <td>{{ order.quantity }}</td>
+      <td style="white-space: pre-line; font-size: 0.9rem;">{{ order.items_summary }}</td>
+      <td><strong>{{ '%.2f'|format(order.total_price) }} ج</strong></td>
       <td>{{ order.status }}</td>
       <td>
-        <form method="post" action="{{ url_for('update_order_status', order_id=order.id) }}" class="status-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <select name="status">
-            {% for s in ['جديد','تم التواصل','مكتمل','ملغي'] %}
-            <option value="{{ s }}" {{ 'selected' if order.status == s else '' }}>{{ s }}</option>
-            {% endfor %}
-          </select>
-          <button class="btn small" type="submit">حفظ</button>
-        </form>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <form method="post" action="{{ url_for('update_order_status', order_id=order.id) }}" class="status-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <select name="status">
+              {% for s in ['جديد','تم التواصل','مكتمل','ملغي'] %}
+              <option value="{{ s }}" {{ 'selected' if order.status == s else '' }}>{{ s }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn small" type="submit">حفظ</button>
+          </form>
+          <form method="post" action="{{ url_for('delete_order', order_id=order.id) }}" onsubmit="return confirm('حذف هذا الطلب؟')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn small danger" type="submit">✕</button>
+          </form>
+        </div>
       </td>
     </tr>
     {% else %}
