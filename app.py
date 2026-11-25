@@ -133,7 +133,7 @@ def admin_required(fn):
 
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1).lower() in ALLOWED_EXTENSIONS
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 def save_image(file):
@@ -141,10 +141,11 @@ def save_image(file):
         return ""
     if not allowed_file(file.filename):
         raise ValueError("صيغة الصورة غير مدعومة. المسموح: jpg, png, webp.")
-    ext = file.filename.rsplit(".", 1).lower()
+    ext = file.filename.rsplit(".", 1)[1].lower()
     filename = secure_filename(f"{secrets.token_hex(12)}.{ext}")
     file.save(UPLOAD_DIR / filename)
     return filename
+
 
 
 def get_cart():
