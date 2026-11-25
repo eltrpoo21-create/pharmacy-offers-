@@ -1,5 +1,7 @@
 import os
 import re
+import io
+import csv
 import time
 import sqlite3
 import secrets
@@ -11,7 +13,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, session, flash, abort, send_from_directory
+    url_for, session, flash, abort, send_from_directory, Response
 )
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.utils import secure_filename
@@ -25,7 +27,6 @@ DB_PATH = DATA_DIR / "store.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
 
-# يفضل تغيير هذه القيم من خلال Environment Variables في Railway
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Mohamed2005")
 
@@ -38,7 +39,6 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 csrf = CSRFProtect(app)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# سجل لحماية صفحة الأدمن من محاولات التخمين المتكررة
 LOGIN_ATTEMPTS = {}
 
 
@@ -90,7 +90,19 @@ def init_db():
             )
         """)
 
-        # ترقية الجداول القديمة تلقائياً بدون مسح البيانات
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS order_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER,
+                customer_name TEXT NOT NULL DEFAULT '',
+                customer_phone TEXT NOT NULL DEFAULT '',
+                customer_address TEXT NOT NULL DEFAULT '',
+                items_summary TEXT NOT NULL DEFAULT '',
+                total_price REAL NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         order_cols = [row["name"] for row in conn.execute("PRAGMA table_info(orders)").fetchall()]
         if "customer_name" not in order_cols:
             conn.execute("ALTER TABLE orders ADD COLUMN customer_name TEXT NOT NULL DEFAULT ''")
@@ -121,7 +133,7 @@ def admin_required(fn):
 
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return "." in filename and filename.rsplit(".", 1).lower() in ALLOWED_EXTENSIONS
 
 
 def save_image(file):
@@ -129,7 +141,7 @@ def save_image(file):
         return ""
     if not allowed_file(file.filename):
         raise ValueError("صيغة الصورة غير مدعومة. المسموح: jpg, png, webp.")
-    ext = file.filename.rsplit(".", 1)[1].lower()
+    ext = file.filename.rsplit(".", 1).lower()
     filename = secure_filename(f"{secrets.token_hex(12)}.{ext}")
     file.save(UPLOAD_DIR / filename)
     return filename
@@ -237,7 +249,6 @@ def customer_logout():
     return redirect(url_for("home"))
 
 
-# ==================== سلة المشتريات ====================
 @app.route("/cart/add/<int:offer_id>", methods=["POST"])
 def add_to_cart(offer_id):
     try:
@@ -362,6 +373,23 @@ def checkout_cart():
         )
         order_id = cur.lastrowid
 
+        conn.execute(
+            """
+            INSERT INTO order_logs(
+                order_id, customer_name, customer_phone,
+                customer_address, items_summary, total_price
+            ) VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (
+                order_id,
+                customer["name"],
+                customer["phone"],
+                customer["address"],
+                items_summary,
+                total_price
+            )
+        )
+
     save_cart({})
     send_order_email(
         order_id,
@@ -373,8 +401,6 @@ def checkout_cart():
     )
     flash(f"تم إرسال طلبك رقم #{order_id} بنجاح! سنتواصل معك قريباً.", "success")
     return redirect(url_for("home"))
-
-
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     ip = request.remote_addr or "unknown"
@@ -418,7 +444,112 @@ def admin_dashboard():
         offers = conn.execute("SELECT * FROM offers ORDER BY id DESC").fetchall()
         customers = conn.execute("SELECT * FROM customers ORDER BY id DESC").fetchall()
         orders = conn.execute("SELECT * FROM orders ORDER BY id DESC").fetchall()
-    return render_template("admin.html", offers=offers, customers=customers, orders=orders)
+        logs = conn.execute("SELECT * FROM order_logs ORDER BY id DESC").fetchall()
+    return render_template("admin.html", offers=offers, customers=customers, orders=orders, logs=logs)
+
+
+@app.route("/admin/logs/export-excel")
+@admin_required
+def export_logs_excel():
+    limit = request.args.get("limit", type=int)
+    with db() as conn:
+        if limit:
+            logs = conn.execute("SELECT * FROM order_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        else:
+            logs = conn.execute("SELECT * FROM order_logs ORDER BY id DESC").fetchall()
+
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output)
+    writer.writerow(["رقم السجل", "رقم الطلب", "اسم العميل", "رقم الهاتف", "العنوان", "تفاصيل الطلب", "الإجمالي (جنيه)", "التاريخ"])
+
+    for log in logs:
+        writer.writerow([
+            log["id"],
+            f"#{log['order_id'] or log['id']}",
+            log["customer_name"],
+            f"\t{log['customer_phone']}",
+            log["customer_address"],
+            log["items_summary"].replace("\n", " | "),
+            f"{log['total_price']:.2f}",
+            log["created_at"]
+        ])
+
+    filename = f"pharmacy_logs_{limit or 'all'}.csv"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@app.route("/admin/logs/print-pdf")
+@admin_required
+def print_logs_pdf():
+    limit = request.args.get("limit", type=int)
+    with db() as conn:
+        if limit:
+            logs = conn.execute("SELECT * FROM order_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        else:
+            logs = conn.execute("SELECT * FROM order_logs ORDER BY id DESC").fetchall()
+
+    total_sum = sum(float(l["total_price"]) for l in logs)
+    rows_html = ""
+    for log in logs:
+        rows_html += f"""
+        <tr>
+            <td>#{log['id']}</td>
+            <td>{log['customer_name']}</td>
+            <td>{log['customer_phone']}</td>
+            <td>{log['customer_address']}</td>
+            <td style="white-space: pre-line;">{log['items_summary']}</td>
+            <td><strong>{log['total_price']:.2f} ج</strong></td>
+            <td>{log['created_at']}</td>
+        </tr>
+        """
+
+    html = f"""
+    <!doctype html>
+    <html lang="ar" dir="rtl">
+    <head>
+        <meta charset="utf-8">
+        <title>تقرير سجلات العملاء والأوردرات</title>
+        <style>
+            body {{ font-family: Tahoma, Arial, sans-serif; padding: 20px; direction: rtl; }}
+            h2 {{ text-align: center; margin-bottom: 5px; }}
+            p.sub {{ text-align: center; color: #555; margin-top: 0; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }}
+            th, td {{ border: 1px solid #333; padding: 8px; text-align: right; }}
+            th {{ background-color: #f0f0f0; }}
+            .summary {{ margin-top: 15px; font-size: 16px; font-weight: bold; text-align: left; }}
+            @media print {{ .no-print {{ display: none; }} }}
+        </style>
+    </head>
+    <body onload="window.print()">
+        <div class="no-print" style="margin-bottom: 15px; text-align: center;">
+            <button onclick="window.print()" style="padding: 10px 20px; font-size: 15px; cursor: pointer;">🖨️ حفظ كـ PDF / طباعة</button>
+        </div>
+        <h2>تقرير سجلات أوردرات العملاء - عروض الصيدلية</h2>
+        <p class="sub">عدد السجلات في التقرير: {len(logs)} | إجمالي المبيعات: {total_sum:.2f} جنيه</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>م</th>
+                    <th>العميل</th>
+                    <th>الهاتف</th>
+                    <th>العنوان</th>
+                    <th>تفاصيل الطلب</th>
+                    <th>الإجمالي</th>
+                    <th>التاريخ</th>
+                </tr>
+            </thead>
+            <tbody>{rows_html}</tbody>
+        </table>
+        <div class="summary">الإجمالي الكلي: {total_sum:.2f} جنيه</div>
+    </body>
+    </html>
+    """
+    return html
 
 
 @app.route("/admin/customers/delete/<int:customer_id>", methods=["POST"])
@@ -429,10 +560,10 @@ def delete_customer(customer_id):
         if mode == "with_orders":
             conn.execute("DELETE FROM orders WHERE customer_id=?", (customer_id,))
             conn.execute("DELETE FROM customers WHERE id=?", (customer_id,))
-            flash("تم حذف العميل وجميع طلباته.", "success")
+            flash("تم حذف العميل وجميع طلباته الحالية.", "success")
         else:
             conn.execute("DELETE FROM customers WHERE id=?", (customer_id,))
-            flash("تم حذف حساب العميل مع الإبقاء على فواتيره في سجل الطلبات.", "success")
+            flash("تم حذف حساب العميل مع الإبقاء على طلباته.", "success")
     return redirect(url_for("admin_dashboard"))
 
 
