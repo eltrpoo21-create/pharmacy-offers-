@@ -7,7 +7,20 @@
 </div>
 
 <section class="admin-panel">
-  <h2>العملاء المسجلون ({{ customers|length }})</h2>
+  <h2>1. إضافة عرض جديد</h2>
+  <form method="post" action="{{ url_for('add_offer') }}" enctype="multipart/form-data" class="admin-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>اسم العرض<input name="title" required maxlength="150"></label>
+    <label>وصف العرض<input name="description" maxlength="500"></label>
+    <label>السعر الحالي بالجنيه<input name="price" type="number" step="0.01" min="0.01" required></label>
+    <label>السعر قبل الخصم (اختياري)<input name="old_price" type="number" step="0.01" min="0.01"></label>
+    <label>صورة العرض<input name="image" type="file" accept=".jpg,.jpeg,.png,.webp"></label>
+    <button class="btn" type="submit">إضافة العرض</button>
+  </form>
+</section>
+
+<section class="admin-panel">
+  <h2>2. العملاء المسجلون ({{ customers|length }})</h2>
   <div class="table-wrap">
   <table>
     <thead>
@@ -26,12 +39,12 @@
         <td>{{ customer.address or 'غير مسجل' }}</td>
         <td>
           <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            <form method="post" action="{{ url_for('delete_customer', customer_id=customer.id) }}" onsubmit="return confirm('سيتم حذف حساب العميل فقط مع بقاء طلباته السابقة في السجل، هل أنت متأكد؟')">
+            <form method="post" action="{{ url_for('delete_customer', customer_id=customer.id) }}" onsubmit="return confirm('سيتم حذف حساب العميل فقط مع بقاء طلباته في السجل، هل أنت متأكد؟')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="mode" value="keep_orders">
               <button class="btn small secondary" type="submit">حذف العميل فقط</button>
             </form>
-            <form method="post" action="{{ url_for('delete_customer', customer_id=customer.id) }}" onsubmit="return confirm('تحذير: سيتم حذف العميل وجميع طلباته نهائياً!')">
+            <form method="post" action="{{ url_for('delete_customer', customer_id=customer.id) }}" onsubmit="return confirm('تحذير: سيتم حذف العميل وطلباته الحالية!')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="mode" value="with_orders">
               <button class="btn small danger" type="submit">حذف مع طلباته</button>
@@ -48,7 +61,7 @@
 </section>
 
 <section class="admin-panel">
-  <h2>طلبات العملاء ({{ orders|length }})</h2>
+  <h2>3. طلبات العملاء ({{ orders|length }})</h2>
   <div class="table-wrap">
   <table>
     <thead>
@@ -84,7 +97,7 @@
             </select>
             <button class="btn small" type="submit">حفظ</button>
           </form>
-          <form method="post" action="{{ url_for('delete_order', order_id=order.id) }}" onsubmit="return confirm('حذف هذا الطلب؟')">
+          <form method="post" action="{{ url_for('delete_order', order_id=order.id) }}" onsubmit="return confirm('حذف هذا الطلب؟ (سيظل محفوظاً في السجلات بالأسفل)')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn small danger" type="submit">✕</button>
           </form>
@@ -100,20 +113,7 @@
 </section>
 
 <section class="admin-panel">
-  <h2>إضافة عرض جديد</h2>
-  <form method="post" action="{{ url_for('add_offer') }}" enctype="multipart/form-data" class="admin-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>اسم العرض<input name="title" required maxlength="150"></label>
-    <label>وصف العرض<input name="description" maxlength="500"></label>
-    <label>السعر الحالي بالجنيه<input name="price" type="number" step="0.01" min="0.01" required></label>
-    <label>السعر قبل الخصم (اختياري)<input name="old_price" type="number" step="0.01" min="0.01"></label>
-    <label>صورة العرض<input name="image" type="file" accept=".jpg,.jpeg,.png,.webp"></label>
-    <button class="btn" type="submit">إضافة العرض</button>
-  </form>
-</section>
-
-<section class="admin-panel">
-  <h2>العروض الحالية</h2>
+  <h2>4. العروض الحالية ({{ offers|length }})</h2>
   {% for offer in offers %}
   <details class="manage-offer">
     <summary>
@@ -143,5 +143,55 @@
   {% else %}
     <p class="muted">لم تتم إضافة عروض بعد.</p>
   {% endfor %}
+</section>
+
+<section class="admin-panel">
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 15px;">
+    <div>
+      <h2 style="margin: 0;">5. سجلات العملاء والأوردرات الدائمة ({{ logs|length }})</h2>
+      {% if logs|length >= 100 %}
+        <span style="color: #0b6e4f; font-weight: bold; font-size: 0.9rem;">
+          🔔 وصلت السجلات إلى {{ logs|length }} سجل — يمكنك تحميل نسخة PDF أو Excel لآخر 100 أوردر الآن!
+        </span>
+      {% endif %}
+    </div>
+    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+      <a class="btn small" href="{{ url_for('print_logs_pdf', limit=100) }}" target="_blank">📄 PDF آخر 100 أوردر</a>
+      <a class="btn small secondary" href="{{ url_for('print_logs_pdf') }}" target="_blank">📄 PDF كل السجلات</a>
+      <a class="btn small" href="{{ url_for('export_logs_excel', limit=100) }}">📊 Excel آخر 100 أوردر</a>
+      <a class="btn small secondary" href="{{ url_for('export_logs_excel') }}">📊 Excel كل السجلات</a>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>رقم السجل</th>
+        <th>العميل</th>
+        <th>الهاتف</th>
+        <th>العنوان</th>
+        <th>تفاصيل الأوردر</th>
+        <th>الإجمالي</th>
+        <th>التاريخ</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for log in logs %}
+      <tr>
+        <td>#{{ log.id }}</td>
+        <td>{{ log.customer_name }}</td>
+        <td>{{ log.customer_phone }}</td>
+        <td>{{ log.customer_address }}</td>
+        <td style="white-space: pre-line; font-size: 0.9rem;">{{ log.items_summary }}</td>
+        <td><strong>{{ '%.2f'|format(log.total_price) }} ج</strong></td>
+        <td style="font-size: 0.85rem;">{{ log.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7">لا توجد سجلات مسجلة بعد.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
 </section>
 {% endblock %}
